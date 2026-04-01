@@ -340,65 +340,100 @@ local function antiGrabReconnect()
 	end)
 end
 local autoStruggleConn = nil
-DefenseGroup:AddToggle("AntiGrabObsidian", {
-	Text = "Anti Grab",
-	Default = false,
-	Callback = function(Value)
-		local RunService = game:GetService("RunService")
-		local ReplicatedStorage = game:GetService("ReplicatedStorage")
-		local localPlayer = game:GetService("Players").LocalPlayer
-		local Struggle = ReplicatedStorage:FindFirstChild("CharacterEvents") and ReplicatedStorage.CharacterEvents:FindFirstChild("Struggle")
-		if Value then
-			if autoStruggleConn then
-				autoStruggleConn:Disconnect()
-			end
-			autoStruggleConn = RunService.Heartbeat:Connect(function()
-				local character = localPlayer.Character
-				if character and character:FindFirstChild("Head") then
-					local head = character.Head
-					if head:FindFirstChild("PartOwner") then
-						task.spawn(function()
-							if Struggle then
-								Struggle:FireServer(localPlayer)
-							end
-							pcall(function()
-								ReplicatedStorage.GameCorrectionEvents.StopAllVelocity:FireServer()
-							end)
-							for _, part in pairs(character:GetChildren()) do
-								if part:IsA("BasePart") then
-									part.Anchored = true
-								end
-							end
-							local isHeld = localPlayer:FindFirstChild("IsHeld")
-							while isHeld and isHeld.Value do
-								task.wait()
-							end
-							for _, part in pairs(character:GetChildren()) do
-								if part:IsA("BasePart") then
-									part.Anchored = false
-								end
-							end
-						end)
-					end
-				end
-			end)
-		else
-			if autoStruggleConn then
-				autoStruggleConn:Disconnect()
-				autoStruggleConn = nil
-			end
-			local char = localPlayer.Character
-			if char then
-				for _, part in pairs(char:GetChildren()) do
-					if part:IsA("BasePart") then
-						part.Anchored = false
-					end
-				end
-			end
-		end
-	end
-})
+local AntiGrabEnabled = false
+local HeldConnection = nil
+do
+    local AntiGrabEnabled = false
+    local HeldConnection = nil
 
+    local function StopAntiGrab()
+        AntiGrabEnabled = false
+        if HeldConnection then
+            HeldConnection:Disconnect()
+            HeldConnection = nil
+        end
+        local Root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+        if Root then Root.Anchored = false end
+    end
+
+    local function StartAntiGrab()
+        if HeldConnection then
+            HeldConnection:Disconnect()
+            HeldConnection = nil
+        end
+        HeldConnection = BeingHeld:GetPropertyChangedSignal("Value"):Connect(function()
+            if not AntiGrabEnabled or not BeingHeld.Value then return end
+            local Char = Player.Character
+            if not Char then return end
+            local Root = Char:FindFirstChild("HumanoidRootPart")
+            local Hum = Char:FindFirstChildOfClass("Humanoid")
+            local Head = Char:FindFirstChild("Head")
+            local lastFreePos = Root and Root.CFrame
+            local renderConn
+            task.spawn(function()
+                while AntiGrabEnabled and BeingHeld.Value do
+                    pcall(function()
+                        StruggleEvent:FireServer()
+                        ReplicatedStorage.CharacterEvents.RagdollRemote:FireServer(Root, 0)
+                        ReplicatedStorage.GameCorrectionEvents.StopAllVelocity:FireServer()
+                    end)
+                    task.wait()
+                end
+            end)
+            task.spawn(function()
+                while AntiGrabEnabled and BeingHeld.Value do
+                    pcall(function()
+                        Hum.Sit = false
+                        Hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                        Hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+                        Root.Anchored = true
+                        Root.AssemblyLinearVelocity = Vector3.zero
+                        Root.AssemblyAngularVelocity = Vector3.zero
+                    end)
+                    task.wait()
+                end
+                if Root then Root.Anchored = false end
+                if renderConn then renderConn:Disconnect() end
+            end)
+            task.spawn(function()
+                while AntiGrabEnabled and Root and Root.Anchored do
+                    pcall(function()
+                        if Hum and Hum.MoveDirection.Magnitude > 0 then
+                            Root.CFrame = Root.CFrame + (Hum.MoveDirection * 0.2)
+                            lastFreePos = Root.CFrame
+                        end
+                        if Head then
+                            Head.CanCollide = false
+                            Head.AssemblyLinearVelocity = Vector3.zero
+                            Head.AssemblyAngularVelocity = Vector3.zero
+                        end
+                    end)
+                    task.wait()
+                end
+            end)
+            renderConn = R.RenderStepped:Connect(function()
+                if not AntiGrabEnabled or not BeingHeld.Value then
+                    renderConn:Disconnect()
+                    return
+                end
+                if Root and lastFreePos then
+                    Root.CFrame = lastFreePos
+                    Root.AssemblyLinearVelocity = Vector3.zero
+                    Root.AssemblyAngularVelocity = Vector3.zero
+                end
+            end)
+        end)
+    end
+
+    DefenseGroup:AddCheckbox("AntiGrabBest", {
+        Text = "Anti Grab",
+        Default = false,
+        Callback = function(Value)
+            AntiGrabEnabled = Value
+            if Value then StartAntiGrab() else StopAntiGrab() end
+        end
+    })
+end
 DefenseGroup:AddToggle("AutoReset", {
     Text = "Auto Reset",
     Default = false,
@@ -741,9 +776,6 @@ DefenseExtra:AddToggle("AutoGucciToggle", {
 		end
 	end
 })
-
-
---// TOY LIST (Short name -> Real name)
 local ToyList = {
 	["Coconut"]     = "FoodCoconut",
 	["Banana"]      = "FoodBanana",
@@ -774,19 +806,17 @@ local ToyList = {
 	["BrownMug"]    = "CupMugBrown",
 	["Trumpet"]     = "InstrumentBrassTrumpet",
 	["Snare"]       = "InstrumentDrumSnare",
+	["Lyre"]       = "InstrumentGuitarLyre",
 }
 
---// DROPDOWN VALUES
 local DropdownValues = {}
 for shortName, _ in pairs(ToyList) do
 	table.insert(DropdownValues, shortName)
 end
 table.sort(DropdownValues)
 
---// DEFAULT TOY
 local SelectedToy = ToyList[DropdownValues[1]]
 
---// DROPDOWN
 DefenseExtra:AddDropdown("AntiInputLagToy", {
 	Text = "Input Lag Item",
 	Values = DropdownValues,
@@ -796,89 +826,66 @@ DefenseExtra:AddDropdown("AntiInputLagToy", {
 	end
 })
 
---// TOGGLE
-DefenseExtra:AddToggle("AntiInputLag", {
-	Text = "Anti Input Lag",
-	Default = false,
-	Callback = function(Value)
-		_G.AntiInputLag = Value
-		if Value then
-			task.spawn(function()
-				local Players = game:GetService("Players")
-				local ReplicatedStorage = game:GetService("ReplicatedStorage")
-				local Workspace = game:GetService("Workspace")
-				local RunService = game:GetService("RunService")
-				local plr = Players.LocalPlayer
-				local char = plr.Character or plr.CharacterAdded:Wait()
-				local hrp = char:WaitForChild("HumanoidRootPart")
-				local SpawnRemote =
-                    ReplicatedStorage:WaitForChild("MenuToys"):WaitForChild("SpawnToyRemoteFunction")
-				while _G.AntiInputLag do
-                    -- Проверяем папку с игрушками игрока
-					local toysFolder = Workspace:FindFirstChild(plr.Name .. "SpawnedInToys")
-					if not toysFolder then
-						task.wait(0.1)
-						continue
-					end
-					local toy = toysFolder:FindFirstChild(SelectedToy)
+DefenseExtra:AddCheckbox("AntiInputLag", {
+    Text = "Anti Input Lag",
+    Default = false,
+    Callback = function(Value)
+        _G.AntiInputLag = Value
+        if not Value then return end
+        task.spawn(function()
+            local plr = Players.LocalPlayer
+            local char = plr.Character or plr.CharacterAdded:Wait()
+            local hrp = char:WaitForChild("HumanoidRootPart")
+            local SpawnRemote = ReplicatedStorage:WaitForChild("MenuToys"):WaitForChild("SpawnToyRemoteFunction")
+            local SelectedToyName = SelectedToy
 
-                    -- Спавним игрушку если её нет
-					if not toy then
-						pcall(function()
-							SpawnRemote:InvokeServer(
-                                SelectedToy,
-                                hrp.CFrame * CFrame.new(0, 5, 0),
-                                Vector3.zero
-                            )
-						end)
+            while _G.AntiInputLag do
+                local toysFolder = workspace:FindFirstChild(plr.Name .. "SpawnedInToys")
+                if not toysFolder then
+                    R.Heartbeat:Wait()
+                    continue
+                end
 
-                        -- Ждём пока игрушка появится
-						local t0 = tick()
-						repeat
-							RunService.Heartbeat:Wait()
-							toysFolder = Workspace:FindFirstChild(plr.Name .. "SpawnedInToys")
-							toy = toysFolder and toysFolder:FindFirstChild(SelectedToy)
-						until toy or tick() - t0 > 1 or not _G.AntiInputLag
-					end-- Работа с HoldPart
-					if toy and toy.Parent then
-						local holdPart = toy:FindFirstChild("HoldPart")
-						if holdPart then
-							local holdingPlayer = holdPart:FindFirstChild("HoldingPlayer")
-							holdingPlayer = holdingPlayer and holdingPlayer.Value
-							if holdingPlayer and holdingPlayer ~= plr then
-                                -- Другой игрок держит – дропаем
-								pcall(function()
-									holdPart.DropItemRemoteFunction:InvokeServer(
-                                        toy,
-                                        hrp.CFrame * CFrame.new(0, 2000, 0),
-                                        Vector3.zero
-                                    )
-								end)
-								toy:Destroy()
-							else
-                                -- Держим игрушку
-								pcall(function()
-									holdPart.HoldItemRemoteFunction:InvokeServer(toy, char)
-								end)
-								task.wait(0.05)
-                                -- Дропаем для ресета
-								pcall(function()
-									holdPart.DropItemRemoteFunction:InvokeServer(
-                                        toy,
-                                        hrp.CFrame * CFrame.new(0, 2000, 0),
-                                        Vector3.zero
-                                    )
-								end)
-								task.wait(0.01)
-							end
-						end
-					end
-					RunService.Heartbeat:Wait()
-				end
-			end)
-		end
-	end
-})
+                local toy = toysFolder:FindFirstChild(SelectedToyName)
+                if not toy then
+                    pcall(function()
+                        SpawnRemote:InvokeServer(SelectedToyName, hrp.CFrame * CFrame.new(0, 5, 0), Vector3.zero)
+                    end)
+                    R.Heartbeat:Wait()
+                else
+                    local holdPart = toy:FindFirstChild("HoldPart")
+                    if holdPart then
+                        local holdingPlayer = holdPart:FindFirstChild("HoldingPlayer") and holdPart.HoldingPlayer.Value
+                        if holdingPlayer and holdingPlayer ~= plr then
+                            pcall(function()
+                                holdPart.DropItemRemoteFunction:InvokeServer(toy, hrp.CFrame * CFrame.new(0, 2000, 0), Vector3.zero)
+                            end)
+                            toy:Destroy()
+                        else
+                            while _G.AntiInputLag do
+                                pcall(function()
+                                    holdPart.HoldItemRemoteFunction:InvokeServer(toy, char)
+                                    holdPart.DropItemRemoteFunction:InvokeServer(toy, hrp.CFrame * CFrame.new(0, 5000, 0), Vector3.zero)
+                                end)
+                                if not toy or not toy.Parent or not toysFolder:FindFirstChild(SelectedToyName) then
+                                    break
+                                end
+                               R.Heartbeat:Wait()
+                            end
+                        end
+                    else
+                        pcall(function()
+                            if toy and toy.Parent then toy:Destroy() end
+                            SpawnRemote:InvokeServer(SelectedToyName, hrp.CFrame * CFrame.new(0, 5, 0), Vector3.zero)
+                        end)
+                        R.Heartbeat:Wait()
+                    end
+                end
+            end
+        end)
+    end
+})   
+ 
 local tpActive = false
 DefenseExtra:AddToggle("ShurikenAntiKick", {
 	Text = "Anti Kick",
