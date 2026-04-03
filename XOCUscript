@@ -606,6 +606,39 @@ if grabFolder then
 		extendGrabLineCopy = originalExtend:Clone()
 	end
 end
+local plr = game:GetService("Players").LocalPlayer
+local RunService = game:GetService("RunService")
+if not _G.cons then _G.cons = {} end 
+
+DefenseGroup:AddToggle("AntiKill", {
+    Text = "Anti Loop Kill",
+    Default = false,
+    Callback = function(v)
+        if _G.cons["antiloopkill"] then 
+            _G.cons["antiloopkill"]:Disconnect() 
+            _G.cons["antiloopkill"] = nil 
+        end
+
+        if v then
+            _G.cons["antiloopkill"] = plr.CharacterAdded:Connect(function(char)
+                local hrp = char:WaitForChild("HumanoidRootPart", 5)
+                if hrp then
+                    -- Ждем буквально один кадр перед телепортом
+                    RunService.RenderStepped:Wait()
+                    
+                    local target = CFrame.new(524.703979, 93.7120056, -375.040985)
+                    hrp.CFrame = target
+                    
+                    -- Быстрая подстраховка на следующие 2 кадра
+                    for i = 1, 2 do
+                        RunService.RenderStepped:Wait()
+                        hrp.CFrame = target
+                    end
+                end
+            end)
+        end
+    end
+})
 DefenseGroup:AddToggle("AntiLagToggle", {
 	Text = "Anti Lag",
 	Default = false,
@@ -702,7 +735,7 @@ DefenseExtra:AddToggle("PaintDeleteToggle", {
 	end
 })
 local autoGucciActive =  false
-DefenseExtra:AddToggle("AutoGucciToggle", {
+DefenseExtra:AddCheckbox("AutoGucciToggle", {
 	Text = "Anti Gucci (Blobman)",
 	Default = false,
 	Callback = function(Value)
@@ -739,6 +772,7 @@ DefenseExtra:AddToggle("AutoGucciToggle", {
 		end
 	end
 })
+
 local autoGucciActiveTrain =  false
 DefenseExtra:AddToggle("AutoGucciToggle", {
 	Text = "Anti Gucci (Train)",
@@ -776,6 +810,43 @@ DefenseExtra:AddToggle("AutoGucciToggle", {
 		end
 	end
 })
+DefenseExtra:AddButton({
+    Text = "Delete Legs",
+    Func = function()
+        local char = Player.Character
+        if not char then return end
+        if char:FindFirstChild("Left Leg") and char:FindFirstChild("Right Leg") then
+            local ll = char:FindFirstChild("Left Leg")
+            local rl = char:FindFirstChild("Right Leg")
+            local void = workspace.FallenPartsDestroyHeight
+            local pos = char.Torso.CFrame
+            workspace.FallenPartsDestroyHeight = -100
+            ReplicatedStorage.CharacterEvents.RagdollRemote:FireServer(char.HumanoidRootPart, 2)
+            task.wait(0.5)
+            rl.CFrame = CFrame.new(0, -10000, 0)
+            ll.CFrame = CFrame.new(0, -10000, 0)
+            task.wait(0.3)
+            char.Torso.CFrame = CFrame.new(0, -9970, 0)
+            task.wait(0.5)
+            char.Torso.CFrame = pos
+            task.wait(0.5)
+            workspace.FallenPartsDestroyHeight = void
+            task.spawn(function()
+                if not char:FindFirstChild("Left Leg") and not char:FindFirstChild("Right Leg") then
+                    while task.wait() do
+                        if Player.PlayerGui.ControlsGui.PCFrame.Stand.Visible == false then
+                            char.Humanoid.HipHeight = 2
+                        else
+                            char.Humanoid.HipHeight = 0
+                        end
+                    end
+                end
+            end)
+        end
+    end
+})
+
+
 local ToyList = {
 	["Coconut"]     = "FoodCoconut",
 	["Banana"]      = "FoodBanana",
@@ -1170,38 +1241,56 @@ TargetGroup:AddButton({
     end
 })
 
+do
+    BlobGroup:AddCheckbox("AutoSitBlob", {
+        Text = "Auto Sit Blobman",
+        Default = false,
+        Callback = function(Value)
+            if Value then
+                task.spawn(function()
+                    while Toggles.AutoSitBlob.Value do
+                        local Char = Player.Character
+                        local Hum = Char and Char:FindFirstChildOfClass("Humanoid")
+                        local Root = Char and Char:FindFirstChild("HumanoidRootPart")
+                        if Hum and Root and not Hum.SeatPart then
+                            local folder = workspace:FindFirstChild(Player.Name .. "SpawnedInToys")
+                            local blob = folder and folder:FindFirstChild("CreatureBlobman")
 
--- Blobman Auto Sit
-_G.AutoSitBlobZ = true
-BlobGroup:AddToggle("AutoSitZ", {
-	Text = "Auto Sit Blobman [Z]",
-	Default = true,
-	Callback = function(Value)
-		_G.AutoSitBlobZ = Value
-	end
-})
+                            -- Pas de blob, on en spawn un
+                            if not blob then
+                                pcall(function()
+                                    RS.MenuToys.SpawnToyRemoteFunction:InvokeServer(
+                                        "CreatureBlobman",
+                                        Root.CFrame * CFrame.new(0, 5, 5),
+                                        Vector3.zero
+                                    )
+                                end)
+                                -- Attend que le blob apparaisse
+                                local t0 = tick()
+                                repeat
+                                    R.Heartbeat:Wait()
+                                    folder = workspace:FindFirstChild(Player.Name .. "SpawnedInToys")
+                                    blob = folder and folder:FindFirstChild("CreatureBlobman")
+                                until blob or tick() - t0 > 5 or not Toggles.AutoSitBlob.Value
+                            end
 
--- Background Loop for Auto-Sit
-task.spawn(function()
-	while true do
-		if _G.AutoSitBlobZ then
-			local char = Player.Character
-			local hum = char and char:FindFirstChild("Humanoid")
-			if hum and not hum.SeatPart then
-				for _, folder in pairs(workspace:GetChildren()) do
-					if folder.Name == Player.Name .. "SpawnedInToys" then
-						local blob = folder:FindFirstChild("CreatureBlobman")
-						local seat = blob and blob:FindFirstChild("VehicleSeat")
-						if seat then
-							seat:Sit(hum)
-						end
-					end
-				end
-			end
-		end
-		task.wait(1)
-	end
-end)
+                            -- Sit sur le blob
+                            if blob then
+                                local seat = blob:FindFirstChildWhichIsA("VehicleSeat")
+                                if seat then
+                                    Root.CFrame = seat.CFrame * CFrame.new(0, 1, 0)
+                                    Root.Velocity = Vector3.zero
+                                    seat:Sit(Hum)
+                                end
+                            end
+                        end
+                        task.wait(0.1)
+                    end
+                end)
+            end
+        end
+    })
+end
 
 -- Global variable to store the height (Default set to 25)
 local customKickHeight = 25
@@ -1783,25 +1872,22 @@ TargetGroup:AddToggle("LoopKickGrabToggle", {
         task.spawn(function()
             local RS = game:GetService("ReplicatedStorage")
             local RunService = game:GetService("RunService")
+            local Players = game:GetService("Players")
+            local Player = Players.LocalPlayer
             local GE = RS:WaitForChild("GrabEvents")
             
             local myChar = Player.Character
             local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
             if not myRoot then 
                 Toggles.LoopKickGrabToggle:SetValue(false)
-                Toggles.LoopKickGrabToggle:Set(false)
                 return 
             end
 
+            -- [[ THE LOCK ]]
             local savedPos = myRoot.CFrame
             local dragging = false
             local grabStartTime = 0
-
-            -- HIGH PING STABILITY SETTINGS
-            local horizontalPower = 45000 -- Extra power to compensate for lag
-            local verticalPower = 2000    
-            local holdHeight = 17         
-            local snatchWaitTime = 0.8    -- LONGER WAIT: Gives the server time to "see" your grab despite high ping
+            local holdHeight = 17 
 
             while kickLoopEnabled do
                 local target = selectedKickPlayer
@@ -1813,34 +1899,33 @@ TargetGroup:AddToggle("LoopKickGrabToggle", {
 
                 if tRoot and tHum and tHum.Health > 0 then
                     if not dragging then
-                        -- PHASE 1: THE HIGH-PING SNATCH
-                        -- We stick to them longer so the server registers the connection
-                        myRoot.CFrame = tRoot.CFrame * CFrame.new(0, 0, 1.5)
+                        -- PHASE 1: THE TELEPORT GRAB
+                        myRoot.CFrame = tRoot.CFrame
                         
-                        -- Firing once per cycle instead of massive spam to prevent lag-clogging
                         pcall(function()
-                            GE.SetNetworkOwner:FireServer(tRoot, tRoot.CFrame)
+                            tHum.PlatformStand = true
+                            tHum.Sit = true
+                            GE.SetNetworkOwner:FireServer(tRoot, myRoot.CFrame)
                             GE.CreateGrabLine:FireServer(tRoot, Vector3.zero, tRoot.Position, false)
                         end)
 
                         if grabStartTime == 0 then grabStartTime = tick() end
-                        
-                        -- We wait longer (0.8s) because of your ping
-                        if tick() - grabStartTime > snatchWaitTime then
+                        if tick() - grabStartTime > 0.6 then
                             dragging = true
                         end
                     else
-                        -- PHASE 2: THE 17-STUD STABLE HOLD
+                        -- PHASE 2: STATIC LOCK (NO SHAKE)
                         myRoot.CFrame = savedPos
+                        myRoot.AssemblyLinearVelocity = Vector3.zero
                         
-                        -- Minimal jitter (too much jitter makes high ping worse)
-                        local lockPos = (savedPos * CFrame.new(0, holdHeight, 0))
-                        
-                        tRoot.CFrame = lockPos
-                        tRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 0) -- Freeze them to help high ping stability
+                        -- Removed the randomAngle logic to prevent shaking
+                        local lockCFrame = savedPos * CFrame.new(0, holdHeight, 0)
+                        tRoot.CFrame = lockCFrame
                         
                         pcall(function()
-                            GE.SetNetworkOwner:FireServer(tRoot, lockPos)
+                            tHum.PlatformStand = true
+                            tHum.Sit = false 
+                            GE.SetNetworkOwner:FireServer(tRoot, lockCFrame)
                             GE.CreateGrabLine:FireServer(tRoot, Vector3.zero, tRoot.Position, false)
                         end)
                     end
@@ -1849,37 +1934,25 @@ TargetGroup:AddToggle("LoopKickGrabToggle", {
                     grabStartTime = 0
                 end
                 
-                -- Wait for physics frame
                 RunService.Heartbeat:Wait()
             end
 
-            -- PHASE 3: THE HIGH-VELOCITY YEET
+            -- [[ CLEANUP ]]
+            if myRoot then myRoot.CFrame = savedPos end
+            
             local target = selectedKickPlayer
             if target and target.Character then
                 local tRoot = target.Character:FindFirstChild("HumanoidRootPart")
-                if tRoot and myRoot then
-                    -- Massive direction to ensure they fly even if there's lag
-                    local throwDirection = (myRoot.CFrame.LookVector * horizontalPower) + Vector3.new(0, verticalPower, 0)
-                    
-                    -- Small loop to ensure the throw packet goes through the high-ping queue
-                    for i = 1, 10 do
-                        tRoot.AssemblyLinearVelocity = throwDirection
-                        tRoot.AssemblyAngularVelocity = Vector3.new(5000, 5000, 5000)
-                        
-                        pcall(function()
-                            GE.DestroyGrabLine:FireServer(tRoot)
-                            -- Use an even larger positional offset for the fling
-                            GE.SetNetworkOwner:FireServer(tRoot, tRoot.CFrame + (myRoot.CFrame.LookVector * 5000))
-                        end)
-                        task.wait(0.01) -- Tiny delay between throw packets for high-ping stability
-                    end
+                if tRoot then
+                    pcall(function()
+                        GE.DestroyGrabLine:FireServer(tRoot)
+                    end)
                 end
             end
-
-            -- CLEANUP
-            if myRoot then myRoot.CFrame = savedPos end
+            
             dragging = false
             kickLoopEnabled = false
+            Toggles.LoopKickGrabToggle:SetValue(false)
         end)
     end
 })
@@ -1988,6 +2061,7 @@ TargetGroup:AddToggle("LoopKickGrabToggle", {
         end)
     end
 })
+
 TargetGroup:AddToggle("LoopKickGrabToggle", { -- УНИКАЛЬНЫЙ ID
 	Text = "Kick (spam grab)",
 	Default = false,
